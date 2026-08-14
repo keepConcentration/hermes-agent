@@ -231,6 +231,17 @@ class TestClassifyApiError:
         assert result.retryable is False
         assert result.should_fallback is True
 
+    def test_copilot_upgrade_plan_message_is_billing(self):
+        """GitHub Copilot ACP surfaces monthly-quota exhaustion as a bare
+        'Upgrade your plan to continue' RuntimeError from the ACP subprocess
+        (no status_code). It must classify as billing so the fallback chain
+        activates instead of surfacing the raw error. (#63815)"""
+        e = MockAPIError("Upgrade your plan to continue")
+        result = classify_api_error(e, provider="copilot-acp")
+        assert result.reason == FailoverReason.billing
+        assert result.retryable is False
+        assert result.should_fallback is True
+
 
     # ── Rate limit ──
 
