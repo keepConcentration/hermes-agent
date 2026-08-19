@@ -719,6 +719,16 @@ def _check_gateway_running(profile_dir: Path) -> bool:
     in the profile's own ``gateway_state.json`` against the live process table,
     mirroring the ``/api/status`` sidebar's liveness logic so the two surfaces
     agree.  Parameterized by ``profile_dir`` so it never mutates ``HERMES_HOME``.
+
+    A shared gateway (profile multiplexer) writes its runtime state to the
+    GLOBAL ``HERMES_HOME/gateway_state.json`` rather than to each profile
+    directory — the default profile owns the single shared listener and serves
+    every profile through the ``/p/<profile>/`` URL prefix.  So when the
+    profile-local state file is absent, fall back to the global state file so a
+    non-default profile is not reported as ``stopped`` while the shared gateway
+    is live (#89726).  The global check omits ``expected_home`` because the
+    shared gateway serves *every* profile, so any live gateway command line is
+    acceptable.
     """
     try:
         from gateway.status import get_running_pid
@@ -735,7 +745,17 @@ def _check_gateway_running(profile_dir: Path) -> bool:
             read_runtime_status,
         )
         runtime = read_runtime_status(profile_dir / "gateway_state.json")
-        return get_runtime_status_running_pid(runtime, expected_home=profile_dir) is not None
+        if (
+            get_runtime_status_running_pid(runtime, expected_home=profile_dir)
+            is not None
+        ):
+            return True
+        # Shared-gateway fallback: the global HERMES_HOME state file is the
+        # only liveness source for a non-default profile under a multiplexer.
+        from hermes_constants import get_hermes_home
+
+        global_runtime = read_runtime_status(get_hermes_home() / "gateway_state.json")
+        return get_runtime_status_running_pid(global_runtime) is not None
     except Exception:
         return False
 

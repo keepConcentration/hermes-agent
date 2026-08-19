@@ -1007,11 +1007,52 @@ class TestEdgeCases:
         ):
             assert _check_gateway_running(default_home) is True
 
+    def test_check_gateway_running_falls_back_to_global_state(self, profile_env):
+        """A shared Gateway writes its runtime state to the GLOBAL HERMES_HOME
+        (not the per-profile directory), so a non-default profile with no local
+        state files must still report the gateway as running.
 
+        Regression: ``hermes profile list`` showed "Gateway stopped" for every
+        non-default profile while the shared gateway was live and listening.
+        See gateway/run.py: the default profile owns the single shared listener
+        and serves every profile through the /p/<profile>/ URL prefix.
+        """
+        import os
+        import gateway.status as gw_status
+        from hermes_cli.profiles import _check_gateway_running
 
+        tmp_path = profile_env
+        global_home = tmp_path / ".hermes"
+        global_home.mkdir(parents=True, exist_ok=True)
 
+        # A non-default profile with NO local gateway state files.
+        profile_dir = global_home / "profiles" / "collector"
+        profile_dir.mkdir(parents=True, exist_ok=True)
 
+        # Shared gateway writes its state to the GLOBAL home only.
+        live_pid = os.getpid()
+        (global_home / "gateway_state.json").write_text(
+            json.dumps(
+                {
+                    "pid": live_pid,
+                    "kind": "hermes-gateway",
+                    "argv": ["hermes", "gateway", "run"],
+                    "start_time": gw_status._get_process_start_time(live_pid),
+                    "gateway_state": "running",
+                    "active_agents": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
 
+        # Primary pid-file/lock check returns None (separate-process reader),
+        # and the profile-local gateway_state.json does not exist — the shared
+        # gateway's global state file is the only liveness source.
+        with patch("gateway.status.get_running_pid", return_value=None), patch(
+            "gateway.status._read_process_cmdline",
+            return_value="hermes gateway run --replace",
+        ):
+            assert _check_gateway_running(profile_dir) is True
 
     def test_clone_from_named_profile(self, profile_env):
         """Clone config from a named (non-default) profile."""
